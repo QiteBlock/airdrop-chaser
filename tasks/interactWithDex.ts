@@ -1,10 +1,8 @@
-import {
-  ActionType,
-  HardhatRuntimeEnvironment,
-  HttpNetworkConfig,
-} from "hardhat/types";
+import { HardhatRuntimeEnvironment, HttpNetworkConfig } from "hardhat/types";
 import DexArgument from "../interface/dex.argument.interface";
-import { networkConfigs } from "../utils/helper-config";
+import { configs, PoolType } from "../utils/helper-config";
+import axios from "axios";
+import { ethers } from "ethers";
 
 export async function interactWithDex(
   taskArgs: DexArgument,
@@ -43,33 +41,52 @@ export async function interactWithDex(
             }: ${hre.ethers.formatEther(balance)} ETH`
           );
           if (balance > 0) {
-            if (taskArgs.initialCoin.toLocaleLowerCase() === "eth") {
-              if (
-                networkConfigs[network.chainId.toString()].dexContract &&
-                networkConfigs[network.chainId.toString()].dexContract !== "" &&
-                networkConfigs[network.chainId.toString()].functionInterface &&
-                networkConfigs[network.chainId.toString()].functionInterface !==
-                  ""
-              ) {
-                const ABI = [
-                  networkConfigs[network.chainId.toString()].functionInterface,
-                ];
-                const smartContract = new hre.ethers.Contract(
-                  networkConfigs[network.chainId.toString()].dexContract,
-                  ABI,
+            if (
+              taskArgs.initialCoin.toLocaleLowerCase() === "eth" &&
+              taskArgs.endCoin.toLocaleLowerCase() === "usdc"
+            ) {
+              if (configs[network.chainId.toString()]?.SyncSwap) {
+                // Get amount out value
+                const amountOut = await getUsdcFromEth(
+                  configs[network.chainId.toString()]!.SyncSwap!.networkName,
+                  configs[network.chainId.toString()]!.SyncSwap!.poolAddress,
+                  parseFloat(
+                    configs[network.chainId.toString()]!.SyncSwap!.amountIn
+                  )
+                );
+                const routerContract = new ethers.Contract(
+                  configs[network.chainId.toString()]!.SyncSwap!.routerAddress,
+                  configs[
+                    network.chainId.toString()
+                  ]!.SyncSwap!.routerFunctionInterface,
                   provider
                 );
-                // to be continued
-                smartContract[
-                  networkConfigs[network.chainId.toString()].functionName
-                ](
-                  "0x0000000000000000000000000000000000000000",
-                  "0x06eFdBFf2a14a7c8E15944D1F4A48F9F95F663A4",
-                  "420"
+                const swapParams =
+                  configs[network.chainId.toString()]!.SyncSwap!.USDC;
+                const currentTimestamp = Math.floor(Date.now() / 1000);
+                const fiveMinutesLater = currentTimestamp + 5 * 60;
+                swapParams.paths[0].steps[0].data =
+                  ethers.AbiCoder.defaultAbiCoder().encode(
+                    ["address", "address", "uint8"],
+                    [
+                      configs[network.chainId.toString()]!.SyncSwap!
+                        .wethContractAddress,
+                      accountAddresses[0],
+                      configs[network.chainId.toString()]!.SyncSwap!
+                        .withdrawIndex,
+                    ]
+                  );
+                swapParams.paths[0].amountIn = ethers.parseEther(
+                  configs[network.chainId.toString()]!.SyncSwap!.amountIn
                 );
+                const tx = await routerContract.connect(signers[i]).swap(
+                  swapParams.paths,
+                  ethers.toBigInt(amountOut),
+                  ethers.toBigInt(fiveMinutesLater)
+                );
+                const txReceipt = await tx.wait();
+                console.log(txReceipt);
               }
-            }
-            if (taskArgs.initialCoin.toLocaleLowerCase() === "usdc") {
             }
           }
         }
@@ -81,6 +98,35 @@ export async function interactWithDex(
   } catch (error) {
     console.error("Error connecting to the RPC server:", error);
   }
+}
+
+async function getUsdcFromEth(
+  networkName: string,
+  pollAddress: string,
+  amountIn: number
+) {
+  try {
+    const apiUrl =
+      "https://api.geckoterminal.com/api/v2/networks/" +
+      networkName +
+      "/pools/" +
+      pollAddress;
+
+    const response = await axios.get(apiUrl);
+    let responseData: PoolType = response.data.data;
+    const baseTokenPriceUSD = parseFloat(
+      responseData.attributes.base_token_price_usd
+    );
+    // Convert ETH amount to the same decimal scale as USDC (6 decimals)
+    const amountETHScaled = amountIn * Math.pow(10, 18 - 6);
+    let amountMin = amountETHScaled * (1 - 0.05) * baseTokenPriceUSD;
+    amountMin = amountMin / Math.pow(10, 6);
+    return Math.round(amountMin).toString();
+  } catch (error) {
+    // Handle errors
+    console.error("Error fetching data:", error);
+  }
+  return "";
 }
 
 function isHttpNetworkConfig(config: any): config is HttpNetworkConfig {
