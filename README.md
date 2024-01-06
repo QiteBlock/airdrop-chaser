@@ -10,8 +10,8 @@ This project provides a template for interacting with multiple blockchain decent
 
 Make sure you have the following installed on your machine:
 
-- Node.js
-- npm (Node Package Manager)
+-   Node.js
+-   npm (Node Package Manager)
 
 ## Getting Started
 
@@ -39,27 +39,35 @@ Specify the networks you want to interact with.
 
 ```javascript
 // hardhat.config.js
-require("@nomiclabs/hardhat-ethers");
+require("@nomiclabs/hardhat-ethers")
 
 module.exports = {
-  networks: {
-    hardhat: {},
-    sepolia: {
-      url: "https://sepolia.infura.io/v3/YOUR_INFURA_PROJECT_ID",
-      accounts: [privateKey1, privateKey2],
+    networks: {
+        hardhat: {},
+        sepolia: {
+            url: "https://sepolia.infura.io/v3/YOUR_INFURA_PROJECT_ID",
+            accounts: [privateKey1, privateKey2],
+        },
+        // Add more networks as needed
     },
-    // Add more networks as needed
-  },
-  solidity: "0.8.19",
-};
+    solidity: "0.8.19",
+}
 ```
 
 5. **Running the Script:**
 
 To interact with DEX contracts on multiple networks, run the following command:
 
+If you want to swap from USDC to ETH with SyncSwap
+
 ```bash
-npx hardhat run scripts/interactWithDex.ts
+npx hardhat interact-with-dex SyncSwap USDC ETH --network scroll
+```
+
+If you want to swap from ETH to USDC with SyncSwap
+
+```bash
+npx hardhat interact-with-dex SyncSwap ETH USDC --network scroll
 ```
 
 This command will execute the script for each network specified in the networks array.
