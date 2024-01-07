@@ -85,3 +85,7 @@ This command will execute the script for each network specified in the networks 
 ## License
 
 This project is licensed under the GNU General Public License v3.0 License - see the LICENSE file for details.
+
+## Support and Contributions
+
+If you find this project useful and would like to support its development, consider making a contribution or sending a tip to 0x1aBF2dc82bD15099cabee2AAFf78640aE8F6cd58.
