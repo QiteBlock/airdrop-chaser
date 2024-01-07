@@ -1,8 +1,8 @@
 import { HardhatRuntimeEnvironment, HttpNetworkConfig } from "hardhat/types"
 import DexArgument from "../interface/dex.argument.interface"
-import { configs, PoolType, TokenConfig } from "../utils/helper-config"
+import { configs, PoolType, TokenConfig, Token } from "../utils/helper-config"
 import axios from "axios"
-import { ethers } from "ethers"
+import { AddressLike, ethers } from "ethers"
 import { SyncSwapRouterABI } from "../utils/sync-swap-abi"
 
 export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntimeEnvironment) {
@@ -24,7 +24,14 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
             try {
                 // Get the network information
                 const network = await provider.getNetwork()
-                console.log(`Connected to network: ${network.name} (ID: ${network.chainId})`)
+                console.log(
+                    "*************** Network " +
+                        networkName +
+                        " and Chain Id " +
+                        network.chainId +
+                        " ********************"
+                )
+                console.log(`Connected to network: ${networkName} (ID: ${network.chainId})`)
                 const signers = await hre.ethers.getSigners()
                 const accountAddresses = signers.map((signer) => signer.address)
                 // Get balances
@@ -38,29 +45,24 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
                     if (balance > 0) {
                         if (taskArgs.dexName == "SyncSwap") {
                             if (
-                                taskArgs.initialCoin.toLocaleLowerCase() === "eth" &&
-                                (taskArgs.endCoin.toLocaleLowerCase() === "usdc" ||
-                                    taskArgs.endCoin.toLocaleLowerCase() === "usdt")
+                                Object.values(Token).includes(taskArgs.initialCoin.toUpperCase() as Token) &&
+                                Object.values(Token).includes(taskArgs.endCoin.toUpperCase() as Token)
                             ) {
-                                await executeSwapEthToCoin(
-                                    network,
-                                    provider,
-                                    accountAddresses[i],
-                                    signers[i],
-                                    taskArgs.endCoin.toUpperCase()
-                                )
-                            } else if (
-                                taskArgs.endCoin.toLocaleLowerCase() === "eth" &&
-                                (taskArgs.initialCoin.toLocaleLowerCase() === "usdc" ||
-                                    taskArgs.initialCoin.toLocaleLowerCase() === "usdt")
-                            ) {
-                                await executeSwapCoinToEth(
-                                    network,
-                                    provider,
-                                    accountAddresses[i],
-                                    signers[i],
-                                    taskArgs.initialCoin.toUpperCase()
-                                )
+                                if (
+                                    taskArgs.initialCoin.toUpperCase() == "ETH" ||
+                                    taskArgs.endCoin.toUpperCase() == "ETH"
+                                ) {
+                                    await executeSwapCoin(
+                                        network,
+                                        provider,
+                                        accountAddresses[i],
+                                        signers[i],
+                                        taskArgs.initialCoin.toUpperCase(),
+                                        taskArgs.endCoin.toUpperCase()
+                                    )
+                                } else {
+                                    console.log("KeyPair Without ETH is not supported yet")
+                                }
                             } else {
                                 console.log(
                                     "In SyncSwap we don't configure this keyPair " +
@@ -86,74 +88,99 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
     }
 }
 
-async function executeSwapCoinToEth(
+async function executeSwapCoin(
     network: ethers.Network,
     provider: ethers.JsonRpcProvider,
     accountAddress: string,
     signer: ethers.Signer,
-    coin: string
+    initialCoin: string,
+    endCoin: string
 ) {
-    const swapParams = configs[network.chainId.toString()]!.SyncSwap["ETH"] as TokenConfig
-    const swapParamsCoin = configs[network.chainId.toString()]!.SyncSwap[coin] as TokenConfig
-    if (swapParams && swapParamsCoin) {
+    const swapParamsInitialCoin = configs[network.chainId.toString()]!.SyncSwap[initialCoin] as TokenConfig
+    const swapParamsEndCoin = configs[network.chainId.toString()]!.SyncSwap[endCoin] as TokenConfig
+    if (swapParamsInitialCoin && swapParamsEndCoin) {
         // Get amount out value
-        const amountIn = parseFloat(configs[network.chainId.toString()]!.SyncSwap["amount" + coin] as string)
-        const amountOut = await getEthFromCoin(
+        const amountIn = parseFloat(swapParamsInitialCoin.amount)
+
+        let amountOut = await getToken2AmountFromToken1(
             configs[network.chainId.toString()]!.SyncSwap!.networkName,
             configs[network.chainId.toString()]!.SyncSwap!.poolAddress,
             amountIn,
-            swapParams.baseOrQuote
+            swapParamsInitialCoin.decimals,
+            swapParamsEndCoin.decimals,
+            swapParamsInitialCoin.address
         )
-        if (amountOut != "") {
-            //Approve token
-            const erc20Contract = new ethers.Contract(
-                swapParamsCoin.address,
-                [
-                    "function approve(address, uint256) returns (bool)",
-                    "function allowance(address, address) view returns (uint256)",
-                ],
-                provider
-            )
-            const allowance = await erc20Contract.allowance(
-                accountAddress,
-                configs[network.chainId.toString()]!.SyncSwap!.routerAddress
-            )
-            console.log(allowance)
-            if (allowance < amountIn) {
-                const approveTx = await erc20Contract
-                    .connect(signer)
-                    .approve(
-                        configs[network.chainId.toString()]!.SyncSwap!.routerAddress,
-                        (amountIn * Math.pow(10, 6)).toString()
-                    )
-                const approveTxReceipt = await approveTx.wait(2)
-                if (approveTxReceipt.status == "1") {
-                    console.log("Approve Transaction Executed successfully " + approveTxReceipt.hash)
-                    // Swap
-                    await swapCoinToEth(
-                        network,
-                        provider,
-                        swapParams,
-                        swapParamsCoin,
-                        signer,
+        if (amountOut > 0) {
+            if (initialCoin.toUpperCase() !== "ETH") {
+                //Approve token
+                const erc20Contract = new ethers.Contract(
+                    swapParamsInitialCoin.address,
+                    [
+                        "function approve(address, uint256) returns (bool)",
+                        "function allowance(address, address) view returns (uint256)",
+                        "function balanceOf(address) view returns (uint256)",
+                    ],
+                    provider
+                )
+                const balanceOfCoin = await erc20Contract.balanceOf(accountAddress)
+                const convertedAmount = parseFloat(swapParamsInitialCoin.amount) * 10 ** swapParamsInitialCoin.decimals
+                const bigIntAmount = BigInt(Math.floor(convertedAmount))
+                if (balanceOfCoin >= bigIntAmount) {
+                    const allowance = await erc20Contract.allowance(
                         accountAddress,
-                        amountIn,
-                        amountOut
+                        configs[network.chainId.toString()]!.SyncSwap!.routerAddress
                     )
+                    if (allowance < bigIntAmount) {
+                        const approveTx = await erc20Contract
+                            .connect(signer)
+                            .approve(configs[network.chainId.toString()]!.SyncSwap!.routerAddress, bigIntAmount)
+                        const approveTxReceipt = await approveTx.wait(2)
+                        if (approveTxReceipt.status == "1") {
+                            console.log("Approve Transaction Executed successfully " + approveTxReceipt.hash)
+                            // Swap
+                            await swapCoin(
+                                network,
+                                provider,
+                                swapParamsInitialCoin,
+                                swapParamsEndCoin,
+                                signer,
+                                accountAddress,
+                                amountIn,
+                                amountOut,
+                                initialCoin
+                            )
+                        } else {
+                            console.log("Approve Transaction Failed " + approveTxReceipt.hash)
+                        }
+                    } else {
+                        // Swap
+                        await swapCoin(
+                            network,
+                            provider,
+                            swapParamsInitialCoin,
+                            swapParamsEndCoin,
+                            signer,
+                            accountAddress,
+                            amountIn,
+                            amountOut,
+                            initialCoin
+                        )
+                    }
                 } else {
-                    console.log("Approve Transaction Failed " + approveTxReceipt.hash)
+                    console.log("Not enough balance of " + initialCoin)
                 }
             } else {
                 // Swap
-                await swapCoinToEth(
+                await swapCoin(
                     network,
                     provider,
-                    swapParams,
-                    swapParamsCoin,
+                    swapParamsInitialCoin,
+                    swapParamsEndCoin,
                     signer,
                     accountAddress,
                     amountIn,
-                    amountOut
+                    amountOut,
+                    initialCoin
                 )
             }
         } else {
@@ -164,15 +191,16 @@ async function executeSwapCoinToEth(
     }
 }
 
-async function swapCoinToEth(
+async function swapCoin(
     network: ethers.Network,
     provider: ethers.JsonRpcApiProvider,
-    swapParams: TokenConfig,
-    swapParamsCoin: TokenConfig,
+    swapParamsInitialCoin: TokenConfig,
+    swapParamsEndCoin: TokenConfig,
     signer: ethers.Signer,
     accountAddress: string,
     amountIn: number,
-    amountOut: string
+    amountOut: number,
+    initialCoin: string
 ) {
     const routerContract = new ethers.Contract(
         configs[network.chainId.toString()]!.SyncSwap!.routerAddress,
@@ -181,16 +209,28 @@ async function swapCoinToEth(
     )
     const currentTimestamp = Math.floor(Date.now() / 1000)
     const fiveMinutesLater = currentTimestamp + 5 * 60
-    swapParams.paths[0].steps[0].data = ethers.AbiCoder.defaultAbiCoder().encode(
+    swapParamsEndCoin.paths[0].steps[0].data = ethers.AbiCoder.defaultAbiCoder().encode(
         ["address", "address", "uint8"],
-        [swapParamsCoin.address, accountAddress, swapParams.withdrawIndex]
+        [swapParamsInitialCoin.address, accountAddress, swapParamsEndCoin.withdrawIndex]
     )
-    swapParams.paths[0].steps[0].pool = swapParamsCoin.paths[0].steps[0].pool
-    swapParams.paths[0].tokenIn = swapParamsCoin.address
-    swapParams.paths[0].amountIn = (amountIn * Math.pow(10, 6)).toString()
-    const tx = await routerContract
-        .connect(signer)
-        .swap(swapParams.paths, ethers.toBigInt(amountOut), ethers.toBigInt(fiveMinutesLater))
+    if (initialCoin !== "ETH") {
+        swapParamsEndCoin.paths[0].steps[0].pool = swapParamsInitialCoin.paths[0].steps[0].pool
+        swapParamsEndCoin.paths[0].tokenIn = swapParamsInitialCoin.address
+    }
+    if (swapParamsEndCoin)
+        swapParamsEndCoin.paths[0].amountIn = (amountIn * Math.pow(10, swapParamsInitialCoin.decimals)).toString()
+    let tx
+    if (initialCoin == "ETH") {
+        tx = await routerContract
+            .connect(signer)
+            .swap(swapParamsEndCoin.paths, ethers.toBigInt(amountOut), ethers.toBigInt(fiveMinutesLater), {
+                value: swapParamsEndCoin.paths[0].amountIn,
+            })
+    } else {
+        tx = await routerContract
+            .connect(signer)
+            .swap(swapParamsEndCoin.paths, ethers.toBigInt(amountOut), ethers.toBigInt(fiveMinutesLater))
+    }
     const txReceipt = await tx.wait()
     if (txReceipt.status == "1") {
         console.log("Transaction Executed successfully " + txReceipt.hash)
@@ -199,96 +239,44 @@ async function swapCoinToEth(
     }
 }
 
-async function executeSwapEthToCoin(
-    network: ethers.Network,
-    provider: ethers.JsonRpcProvider,
-    accountAddress: string,
-    signer: ethers.Signer,
-    coin: string
+async function getToken2AmountFromToken1(
+    networkName: string,
+    pollAddress: string,
+    token1Amount: number,
+    token1Decimals: number,
+    token2Decimals: number,
+    token1Address: string
 ) {
-    const swapParams = configs[network.chainId.toString()]!.SyncSwap[coin] as TokenConfig
-    if (swapParams) {
-        // Get amount out value
-        const amountOut = await getCoinFromEth(
-            configs[network.chainId.toString()]!.SyncSwap!.networkName,
-            swapParams.paths[0].steps[0].pool,
-            parseFloat(configs[network.chainId.toString()]!.SyncSwap!.amountIn),
-            swapParams.baseOrQuote
-        )
-        if (amountOut != "") {
-            const routerContract = new ethers.Contract(
-                configs[network.chainId.toString()]!.SyncSwap!.routerAddress,
-                SyncSwapRouterABI,
-                provider
-            )
-            const currentTimestamp = Math.floor(Date.now() / 1000)
-            const fiveMinutesLater = currentTimestamp + 5 * 60
-            swapParams.paths[0].steps[0].data = ethers.AbiCoder.defaultAbiCoder().encode(
-                ["address", "address", "uint8"],
-                [
-                    configs[network.chainId.toString()]!.SyncSwap!.wethContractAddress,
-                    accountAddress,
-                    swapParams.withdrawIndex,
-                ]
-            )
-            const tx = await routerContract
-                .connect(signer)
-                .swap(swapParams.paths, ethers.toBigInt(amountOut), ethers.toBigInt(fiveMinutesLater), {
-                    value: swapParams.paths[0].amountIn,
-                })
-            const txReceipt = await tx.wait()
-            if (txReceipt.status == "1") {
-                console.log("Transaction Executed successfully " + txReceipt.hash)
-            } else {
-                console.log("Transaction Failed " + txReceipt.hash)
-            }
+    try {
+        const apiUrl = "https://api.geckoterminal.com/api/v2/networks/" + networkName + "/pools/" + pollAddress
+
+        const response = await axios.get(apiUrl)
+        let responseData: PoolType = response.data.data
+        const quoteTokenPriceBaseToken = responseData.attributes.quote_token_price_base_token
+        // Determine who is the base and the quote of this pool
+        let baseDecimals = token2Decimals
+        let quoteDecimals = token1Decimals
+        let amountIn = token1Amount
+        if (responseData.relationships.base_token.data.id == networkName + "_" + token1Address) {
+            baseDecimals = token1Decimals
+            quoteDecimals = token2Decimals
+            // Adjust the conversion based on the decimal scales
+            const quantityInQuote =
+                (amountIn * 10 ** quoteDecimals) / (parseFloat(quoteTokenPriceBaseToken) * 10 ** baseDecimals)
+            // Slippage of 5%
+            return Math.floor(quantityInQuote * 10 ** baseDecimals * (1 - 0.05))
         } else {
-            console.log("The amount to swap is not correct!")
+            // Adjust the conversion based on the decimal scales
+            const quantityInBase =
+                (amountIn * parseFloat(quoteTokenPriceBaseToken)) / 10 ** (quoteDecimals - baseDecimals)
+            // Slippage of 5%
+            return Math.floor(quantityInBase * 10 ** quoteDecimals * (1 - 0.05))
         }
-    } else {
-        console.log("This coin is not supported!")
-    }
-}
-
-async function getEthFromCoin(networkName: string, pollAddress: string, amountIn: number, baseOrQuote: string) {
-    try {
-        const apiUrl = "https://api.geckoterminal.com/api/v2/networks/" + networkName + "/pools/" + pollAddress
-
-        const response = await axios.get(apiUrl)
-        let responseData: PoolType = response.data.data
-        // USDC price in USD and its decimal scale (6 decimals)
-        const usdcPriceUSD = parseFloat(responseData.attributes.base_token_price_usd)
-        // Calculate the equivalent amount in USD for the given amount of USDT
-        const amountUSD = amountIn * usdcPriceUSD
-        // ETH price in USD and its decimal scale (18 decimals)
-        const ethPriceUSD = parseFloat(responseData.attributes[baseOrQuote])
-        // Calculate the equivalent amount in ETH for the given amount of USD
-        const amountETH = (amountUSD / ethPriceUSD) * Math.pow(10, 18) * (1 - 0.05)
-        return Math.round(amountETH).toString()
     } catch (error) {
         // Handle errors
         console.error("Error fetching data:", error)
     }
-    return ""
-}
-
-async function getCoinFromEth(networkName: string, pollAddress: string, amountIn: number, baseOrQuote: string) {
-    try {
-        const apiUrl = "https://api.geckoterminal.com/api/v2/networks/" + networkName + "/pools/" + pollAddress
-
-        const response = await axios.get(apiUrl)
-        let responseData: PoolType = response.data.data
-        const baseTokenPriceUSD = parseFloat(responseData.attributes[baseOrQuote])
-        // Convert ETH amount to the same decimal scale as USDC (6 decimals)
-        const amountETHScaled = amountIn * Math.pow(10, 18 - 6)
-        let amountMin = amountETHScaled * (1 - 0.05) * baseTokenPriceUSD
-        amountMin = amountMin / Math.pow(10, 6)
-        return Math.round(amountMin).toString()
-    } catch (error) {
-        // Handle errors
-        console.error("Error fetching data:", error)
-    }
-    return ""
+    return 0
 }
 
 function isHttpNetworkConfig(config: any): config is HttpNetworkConfig {
@@ -296,7 +284,7 @@ function isHttpNetworkConfig(config: any): config is HttpNetworkConfig {
         config &&
         typeof config.url === "string" &&
         !config.url.includes("127.0.0.1") &&
-        !config.url.includes("sepolia.infura.io")
+        !config.url.includes("eth-mainnet.")
     )
 }
 

@@ -54,9 +54,19 @@ module.exports = {
 }
 ```
 
-5. **Running the Script:**
+5. **Complete the .env file:**
+
+This project is working only with initial or end coin equals to ETH
+
+Create your own env file, you have an example .env.example :
+
+PRIVATE_KEYS is wallets that you want to interact with the DEX. Separate each them with a space.
+
+6. **Running the Script:**
 
 To interact with DEX contracts on multiple networks, run the following command:
+
+Please notice that even that it will scan all the networks and execute it in all the network but in the command you still need to specify a network that exists
 
 If you want to swap from USDC to ETH with SyncSwap
 
