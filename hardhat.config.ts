@@ -6,6 +6,7 @@ import { interactWithDex } from "./tasks/interactWithDex"
 import * as dotenv from "dotenv"
 dotenv.config({ path: __dirname + "/.env" })
 
+const MAINNET_RPC_URL = process.env.MAINNET_RPC_URL || ""
 const PRIVATE_KEYS = process.env.PRIVATE_KEYS?.split(" ") || []
 
 task("interact-with-dex", "A task to interact with dex")
@@ -13,14 +14,20 @@ task("interact-with-dex", "A task to interact with dex")
     .addPositionalParam("initialCoin")
     .addPositionalParam("endCoin")
     .setAction(async (taskArgs, hre) => {
-        await interactWithDex(taskArgs, hre)
+        await interactWithDex(taskArgs, hre, PRIVATE_KEYS)
     })
 
 const config: HardhatUserConfig = {
     solidity: "0.8.19",
     networks: {
-        zkSync: {
+        mainnet: {
+            url: MAINNET_RPC_URL,
+            accounts: PRIVATE_KEYS,
+            zksync: false,
+        },
+        zksync: {
             url: "https://mainnet.era.zksync.io",
+            ethNetwork: "mainnet",
             accounts: PRIVATE_KEYS,
             zksync: true,
         },

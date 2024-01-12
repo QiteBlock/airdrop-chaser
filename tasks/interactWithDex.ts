@@ -5,7 +5,7 @@ import axios from "axios"
 import { ethers } from "ethers"
 import { SyncSwapRouterABI } from "../utils/sync-swap-abi"
 
-export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntimeEnvironment) {
+export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntimeEnvironment, PRIVATE_KEYS: string[]) {
     try {
         console.log(taskArgs)
         const networksList = Object.keys(hre.config.networks)
@@ -19,23 +19,41 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
                 continue
             }
 
-            const { provider, network, signers } = await connectToNetwork(networkConfig, hre, networkName)
+            const { provider, network, signers } = await connectToNetwork(networkConfig, hre, networkName, PRIVATE_KEYS)
 
             console.log(`Connected to network: ${networkName} (ID: ${network.chainId})`)
 
-            await processBalances(network, provider, signers, taskArgs, hre)
+            await processBalances(network, provider, signers, taskArgs, hre, networkName)
         }
     } catch (error) {
         console.error("Error connecting to the RPC server:", error)
     }
 }
 
-async function connectToNetwork(networkConfig: HttpNetworkConfig, hre: HardhatRuntimeEnvironment, networkName: string) {
+async function connectToNetwork(
+    networkConfig: HttpNetworkConfig,
+    hre: HardhatRuntimeEnvironment,
+    networkName: string,
+    PRIVATE_KEYS: string[]
+) {
+    console.log(networkConfig.url)
     const provider = new hre.ethers.JsonRpcProvider(networkConfig.url)
     const network = await provider.getNetwork()
     console.log(`*************** Network ${networkName} and Chain Id ${network.chainId} ********************`)
-    const signers = await hre.ethers.getSigners()
+    const signers = await createSigners(PRIVATE_KEYS, provider)
     return { provider, network, signers }
+}
+
+async function createSigners(privateKeys: string[], provider: ethers.JsonRpcProvider) {
+    const signers = []
+
+    for (const privateKey of privateKeys) {
+        const wallet = new ethers.Wallet(privateKey)
+        const hardhatEthersSigner = await wallet.connect(provider)
+        signers.push(hardhatEthersSigner)
+    }
+
+    return signers
 }
 
 async function processBalances(
@@ -43,7 +61,8 @@ async function processBalances(
     provider: ethers.JsonRpcProvider,
     signers: ethers.Signer[],
     taskArgs: DexArgument,
-    hre: HardhatRuntimeEnvironment
+    hre: HardhatRuntimeEnvironment,
+    networkName: string
 ) {
     for (let i = 0; i < signers.length; i++) {
         const address = await signers[i].getAddress()
@@ -54,7 +73,7 @@ async function processBalances(
         )
 
         if (balance > 0) {
-            await handleDexInteraction(network, provider, signers[i], taskArgs)
+            await handleDexInteraction(network, provider, signers[i], taskArgs, networkName, hre)
         } else {
             console.log(`This account ${address} doesn't have enough ETH balance!`)
         }
@@ -65,7 +84,9 @@ async function handleDexInteraction(
     network: ethers.Network,
     provider: ethers.JsonRpcProvider,
     signer: ethers.Signer,
-    taskArgs: DexArgument
+    taskArgs: DexArgument,
+    networkName: string,
+    hre: HardhatRuntimeEnvironment
 ) {
     if (taskArgs.dexName !== "SyncSwap") {
         console.log(`This dex is not supported under this network ${network.chainId}`)
@@ -83,7 +104,9 @@ async function handleDexInteraction(
             provider,
             signer,
             taskArgs.initialCoin.toUpperCase(),
-            taskArgs.endCoin.toUpperCase()
+            taskArgs.endCoin.toUpperCase(),
+            networkName,
+            hre
         )
     } else {
         console.log("KeyPair Without ETH is not supported yet")
@@ -102,52 +125,73 @@ async function executeSwapCoin(
     provider: ethers.JsonRpcProvider,
     signer: ethers.Signer,
     initialCoin: string,
-    endCoin: string
+    endCoin: string,
+    networkName: string,
+    hre: HardhatRuntimeEnvironment
 ) {
-    const accountAddress = await signer.getAddress()
-    const swapParamsInitialCoin = configs[network.chainId.toString()]!.SyncSwap[initialCoin] as TokenConfig
-    const swapParamsEndCoin = configs[network.chainId.toString()]!.SyncSwap[endCoin] as TokenConfig
-    if (swapParamsInitialCoin && swapParamsEndCoin) {
-        // Get amount out value
-        const amountInMax = parseFloat(swapParamsInitialCoin.amount)
-        const amountInMin = parseFloat(swapParamsInitialCoin.amountMin)
-        let randomAmountIn = getRandomNumber(amountInMin, amountInMax)
-        const amountIn = parseFloat(randomAmountIn.toFixed(swapParamsInitialCoin.decimals))
-        let amountOut = await getToken2AmountFromToken1(
-            configs[network.chainId.toString()]!.SyncSwap!.networkName,
-            configs[network.chainId.toString()]!.SyncSwap!.poolAddress,
-            amountIn,
-            swapParamsInitialCoin.decimals,
-            swapParamsEndCoin.decimals,
-            swapParamsInitialCoin.address
-        )
-        if (amountOut > 0) {
-            if (initialCoin.toUpperCase() !== "ETH") {
-                //Approve token
-                const erc20Contract = new ethers.Contract(
-                    swapParamsInitialCoin.address,
-                    [
-                        "function approve(address, uint256) returns (bool)",
-                        "function allowance(address, address) view returns (uint256)",
-                        "function balanceOf(address) view returns (uint256)",
-                    ],
-                    provider
-                )
-                const balanceOfCoin = await erc20Contract.balanceOf(accountAddress)
-                const convertedAmount = parseFloat(swapParamsInitialCoin.amount) * 10 ** swapParamsInitialCoin.decimals
-                const bigIntAmount = BigInt(Math.floor(convertedAmount))
-                if (balanceOfCoin >= bigIntAmount) {
-                    const allowance = await erc20Contract.allowance(
-                        accountAddress,
-                        configs[network.chainId.toString()]!.SyncSwap!.routerAddress
+    if (configs[network.chainId.toString()]!.SyncSwap.networkName == networkName) {
+        const accountAddress = await signer.getAddress()
+        const swapParamsInitialCoin = configs[network.chainId.toString()]!.SyncSwap[initialCoin] as TokenConfig
+        const swapParamsEndCoin = configs[network.chainId.toString()]!.SyncSwap[endCoin] as TokenConfig
+        if (swapParamsInitialCoin && swapParamsEndCoin) {
+            // Get amount out value
+            const amountInMax = parseFloat(swapParamsInitialCoin.amount)
+            const amountInMin = parseFloat(swapParamsInitialCoin.amountMin)
+            let randomAmountIn = getRandomNumber(amountInMin, amountInMax)
+            const amountIn = parseFloat(randomAmountIn.toFixed(swapParamsInitialCoin.decimals))
+            let amountOut = await getToken2AmountFromToken1(
+                configs[network.chainId.toString()]!.SyncSwap!.networkName,
+                configs[network.chainId.toString()]!.SyncSwap!.poolAddress,
+                amountIn,
+                swapParamsInitialCoin.decimals,
+                swapParamsEndCoin.decimals,
+                swapParamsInitialCoin.address
+            )
+            if (amountOut > 0) {
+                if (initialCoin.toUpperCase() !== "ETH") {
+                    //Approve token
+                    const erc20Contract = new hre.ethers.Contract(
+                        swapParamsInitialCoin.address,
+                        [
+                            "function approve(address, uint256) returns (bool)",
+                            "function allowance(address, address) view returns (uint256)",
+                            "function balanceOf(address) view returns (uint256)",
+                        ],
+                        provider
                     )
-                    if (allowance < bigIntAmount) {
-                        const approveTx = await erc20Contract
-                            .connect(signer)
-                            .approve(configs[network.chainId.toString()]!.SyncSwap!.routerAddress, bigIntAmount)
-                        const approveTxReceipt = await approveTx.wait(2)
-                        if (approveTxReceipt.status == "1") {
-                            console.log("Approve Transaction Executed successfully " + approveTxReceipt.hash)
+                    const balanceOfCoin = await erc20Contract.balanceOf(accountAddress)
+                    const convertedAmount =
+                        parseFloat(swapParamsInitialCoin.amount) * 10 ** swapParamsInitialCoin.decimals
+                    const bigIntAmount = BigInt(Math.floor(convertedAmount))
+                    if (balanceOfCoin >= bigIntAmount) {
+                        const allowance = await erc20Contract.allowance(
+                            accountAddress,
+                            configs[network.chainId.toString()]!.SyncSwap!.routerAddress
+                        )
+                        if (allowance < bigIntAmount) {
+                            const approveTx = await erc20Contract
+                                .connect(signer)
+                                .approve(configs[network.chainId.toString()]!.SyncSwap!.routerAddress, bigIntAmount)
+                            const approveTxReceipt = await approveTx.wait(2)
+                            if (approveTxReceipt.status == "1") {
+                                console.log("Approve Transaction Executed successfully " + approveTxReceipt.hash)
+                                // Swap
+                                await swapCoin(
+                                    network,
+                                    provider,
+                                    swapParamsInitialCoin,
+                                    swapParamsEndCoin,
+                                    signer,
+                                    accountAddress,
+                                    amountIn,
+                                    amountOut,
+                                    initialCoin,
+                                    hre
+                                )
+                            } else {
+                                console.log("Approve Transaction Failed " + approveTxReceipt.hash)
+                            }
+                        } else {
                             // Swap
                             await swapCoin(
                                 network,
@@ -158,47 +202,36 @@ async function executeSwapCoin(
                                 accountAddress,
                                 amountIn,
                                 amountOut,
-                                initialCoin
+                                initialCoin,
+                                hre
                             )
-                        } else {
-                            console.log("Approve Transaction Failed " + approveTxReceipt.hash)
                         }
                     } else {
-                        // Swap
-                        await swapCoin(
-                            network,
-                            provider,
-                            swapParamsInitialCoin,
-                            swapParamsEndCoin,
-                            signer,
-                            accountAddress,
-                            amountIn,
-                            amountOut,
-                            initialCoin
-                        )
+                        console.log("Not enough balance of " + initialCoin)
                     }
                 } else {
-                    console.log("Not enough balance of " + initialCoin)
+                    // Swap
+                    await swapCoin(
+                        network,
+                        provider,
+                        swapParamsInitialCoin,
+                        swapParamsEndCoin,
+                        signer,
+                        accountAddress,
+                        amountIn,
+                        amountOut,
+                        initialCoin,
+                        hre
+                    )
                 }
             } else {
-                // Swap
-                await swapCoin(
-                    network,
-                    provider,
-                    swapParamsInitialCoin,
-                    swapParamsEndCoin,
-                    signer,
-                    accountAddress,
-                    amountIn,
-                    amountOut,
-                    initialCoin
-                )
+                console.log("The amount to swap is not correct!")
             }
         } else {
-            console.log("The amount to swap is not correct!")
+            console.log("This coin is not supported!")
         }
     } else {
-        console.log("This coin is not supported!")
+        console.log("Network problem!")
     }
 }
 
@@ -222,9 +255,10 @@ async function swapCoin(
     accountAddress: string,
     amountIn: number,
     amountOut: number,
-    initialCoin: string
+    initialCoin: string,
+    hre: HardhatRuntimeEnvironment
 ) {
-    const routerContract = new ethers.Contract(
+    const routerContract = new hre.ethers.Contract(
         configs[network.chainId.toString()]!.SyncSwap!.routerAddress,
         SyncSwapRouterABI,
         provider
@@ -239,8 +273,7 @@ async function swapCoin(
         swapParamsEndCoin.paths[0].steps[0].pool = swapParamsInitialCoin.paths[0].steps[0].pool
         swapParamsEndCoin.paths[0].tokenIn = swapParamsInitialCoin.address
     }
-    if (swapParamsEndCoin)
-        swapParamsEndCoin.paths[0].amountIn = (amountIn * Math.pow(10, swapParamsInitialCoin.decimals)).toString()
+    swapParamsEndCoin.paths[0].amountIn = (amountIn * Math.pow(10, swapParamsInitialCoin.decimals)).toString()
     let tx
     if (initialCoin == "ETH") {
         tx = await routerContract

@@ -66,18 +66,10 @@ PRIVATE_KEYS is wallets that you want to interact with the DEX. Separate each th
 
 To interact with DEX contracts on multiple networks, run the following command:
 
-Please notice that even that it will scan all the networks and execute it in all the network but in the command you still need to specify a network that exists
-
-If you want to swap from USDC to ETH with SyncSwap
-
-```bash
-npx hardhat interact-with-dex SyncSwap USDC ETH --network scroll
-```
-
 If you want to swap from ETH to USDC with SyncSwap
 
 ```bash
-npx hardhat interact-with-dex SyncSwap ETH USDC --network scroll
+npx hardhat interact-with-dex SyncSwap ETH USDC
 ```
 
 This command will execute the script for each network specified in the networks array.
