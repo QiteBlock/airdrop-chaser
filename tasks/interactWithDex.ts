@@ -10,92 +10,101 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
         console.log(taskArgs)
         const networksList = Object.keys(hre.config.networks)
         console.log("List of networks:", networksList)
-        // Verify we are connected to the network
+
         for (const networkName of networksList) {
             const networkConfig = hre.config.networks[networkName]
-            // Skip networks without a URL (e.g., local development network)
+
             if (!isHttpNetworkConfig(networkConfig)) {
                 console.log(`Skipping network ${networkName} (no URL specified)`)
                 continue
             }
 
-            const provider = new hre.ethers.JsonRpcProvider(networkConfig.url)
+            const { provider, network, signers } = await connectToNetwork(networkConfig, hre)
 
-            try {
-                // Get the network information
-                const network = await provider.getNetwork()
-                console.log(
-                    "*************** Network " +
-                        networkName +
-                        " and Chain Id " +
-                        network.chainId +
-                        " ********************"
-                )
-                console.log(`Connected to network: ${networkName} (ID: ${network.chainId})`)
-                const signers = await hre.ethers.getSigners()
-                const accountAddresses = signers.map((signer) => signer.address)
-                // Get balances
-                for (let i = 0; i < accountAddresses.length; i++) {
-                    const balance = await provider.getBalance(accountAddresses[i])
-                    console.log(
-                        `Balance of ${accountAddresses[i]} on ${network.name} ${
-                            network.chainId
-                        }: ${hre.ethers.formatEther(balance)} ETH`
-                    )
-                    if (balance > 0) {
-                        if (taskArgs.dexName == "SyncSwap") {
-                            if (
-                                Object.values(Token).includes(taskArgs.initialCoin.toUpperCase() as Token) &&
-                                Object.values(Token).includes(taskArgs.endCoin.toUpperCase() as Token)
-                            ) {
-                                if (
-                                    taskArgs.initialCoin.toUpperCase() == "ETH" ||
-                                    taskArgs.endCoin.toUpperCase() == "ETH"
-                                ) {
-                                    await executeSwapCoin(
-                                        network,
-                                        provider,
-                                        accountAddresses[i],
-                                        signers[i],
-                                        taskArgs.initialCoin.toUpperCase(),
-                                        taskArgs.endCoin.toUpperCase()
-                                    )
-                                } else {
-                                    console.log("KeyPair Without ETH is not supported yet")
-                                }
-                            } else {
-                                console.log(
-                                    "In SyncSwap we don't configure this keyPair " +
-                                        taskArgs.initialCoin +
-                                        "/" +
-                                        taskArgs.endCoin
-                                )
-                            }
-                        } else {
-                            console.log("This dex is not supported under this network " + network.chainId.toString())
-                        }
-                    } else {
-                        console.log("This account " + accountAddresses[i] + " don't have enough Eth balance!")
-                    }
-                }
-            } catch (error) {
-                console.error(`Error connecting to network ${networkName}:`)
-                console.error(error)
-            }
+            console.log(`Connected to network: ${networkName} (ID: ${network.chainId})`)
+
+            await processBalances(network, provider, signers, taskArgs, hre)
         }
     } catch (error) {
         console.error("Error connecting to the RPC server:", error)
     }
 }
 
+async function connectToNetwork(networkConfig: HttpNetworkConfig, hre: HardhatRuntimeEnvironment) {
+    const provider = new hre.ethers.JsonRpcProvider(networkConfig.url)
+    const network = await provider.getNetwork()
+    console.log(`*************** Network ${network.name} and Chain Id ${network.chainId} ********************`)
+    const signers = await hre.ethers.getSigners()
+    return { provider, network, signers }
+}
+
+async function processBalances(
+    network: ethers.Network,
+    provider: ethers.JsonRpcProvider,
+    signers: ethers.Signer[],
+    taskArgs: DexArgument,
+    hre: HardhatRuntimeEnvironment
+) {
+    for (let i = 0; i < signers.length; i++) {
+        const address = await signers[i].getAddress()
+        const balance = await provider.getBalance(address)
+
+        console.log(
+            `Balance of ${address} on ${network.name} ${network.chainId}: ${hre.ethers.formatEther(balance)} ETH`
+        )
+
+        if (balance > 0) {
+            await handleDexInteraction(network, provider, signers[i], address, taskArgs)
+        } else {
+            console.log(`This account ${address} doesn't have enough ETH balance!`)
+        }
+    }
+}
+
+async function handleDexInteraction(
+    network: ethers.Network,
+    provider: ethers.JsonRpcProvider,
+    signer: ethers.Signer,
+    taskArgs: DexArgument
+) {
+    if (taskArgs.dexName !== "SyncSwap") {
+        console.log(`This dex is not supported under this network ${network.chainId}`)
+        return
+    }
+
+    if (!areValidTokens(taskArgs.initialCoin, taskArgs.endCoin)) {
+        console.log(`In SyncSwap we don't configure this keyPair ${taskArgs.initialCoin}/${taskArgs.endCoin}`)
+        return
+    }
+
+    if (taskArgs.initialCoin.toUpperCase() === "ETH" || taskArgs.endCoin.toUpperCase() === "ETH") {
+        await executeSwapCoin(
+            network,
+            provider,
+            signer,
+            taskArgs.initialCoin.toUpperCase(),
+            taskArgs.endCoin.toUpperCase()
+        )
+    } else {
+        console.log("KeyPair Without ETH is not supported yet")
+    }
+}
+
+function areValidTokens(initialCoin: string, endCoin: string): boolean {
+    return (
+        Object.values(Token).includes(initialCoin.toUpperCase() as Token) &&
+        Object.values(Token).includes(endCoin.toUpperCase() as Token)
+    )
+}
+
 async function executeSwapCoin(
     network: ethers.Network,
     provider: ethers.JsonRpcProvider,
-    accountAddress: string,
     signer: ethers.Signer,
     initialCoin: string,
     endCoin: string
 ) {
+    const accountAddress = await signer.getAddress()
     const swapParamsInitialCoin = configs[network.chainId.toString()]!.SyncSwap[initialCoin] as TokenConfig
     const swapParamsEndCoin = configs[network.chainId.toString()]!.SyncSwap[endCoin] as TokenConfig
     if (swapParamsInitialCoin && swapParamsEndCoin) {
