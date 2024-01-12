@@ -2,7 +2,7 @@ import { HardhatRuntimeEnvironment, HttpNetworkConfig } from "hardhat/types"
 import DexArgument from "../interface/dex.argument.interface"
 import { configs, PoolType, TokenConfig, Token } from "../utils/helper-config"
 import axios from "axios"
-import { AddressLike, ethers } from "ethers"
+import { ethers } from "ethers"
 import { SyncSwapRouterABI } from "../utils/sync-swap-abi"
 
 export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntimeEnvironment) {
@@ -19,7 +19,7 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
                 continue
             }
 
-            const { provider, network, signers } = await connectToNetwork(networkConfig, hre)
+            const { provider, network, signers } = await connectToNetwork(networkConfig, hre, networkName)
 
             console.log(`Connected to network: ${networkName} (ID: ${network.chainId})`)
 
@@ -30,10 +30,10 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
     }
 }
 
-async function connectToNetwork(networkConfig: HttpNetworkConfig, hre: HardhatRuntimeEnvironment) {
+async function connectToNetwork(networkConfig: HttpNetworkConfig, hre: HardhatRuntimeEnvironment, networkName: string) {
     const provider = new hre.ethers.JsonRpcProvider(networkConfig.url)
     const network = await provider.getNetwork()
-    console.log(`*************** Network ${network.name} and Chain Id ${network.chainId} ********************`)
+    console.log(`*************** Network ${networkName} and Chain Id ${network.chainId} ********************`)
     const signers = await hre.ethers.getSigners()
     return { provider, network, signers }
 }
@@ -54,7 +54,7 @@ async function processBalances(
         )
 
         if (balance > 0) {
-            await handleDexInteraction(network, provider, signers[i], address, taskArgs)
+            await handleDexInteraction(network, provider, signers[i], taskArgs)
         } else {
             console.log(`This account ${address} doesn't have enough ETH balance!`)
         }
@@ -109,8 +109,10 @@ async function executeSwapCoin(
     const swapParamsEndCoin = configs[network.chainId.toString()]!.SyncSwap[endCoin] as TokenConfig
     if (swapParamsInitialCoin && swapParamsEndCoin) {
         // Get amount out value
-        const amountIn = parseFloat(swapParamsInitialCoin.amount)
-
+        const amountInMax = parseFloat(swapParamsInitialCoin.amount)
+        const amountInMin = parseFloat(swapParamsInitialCoin.amountMin)
+        let randomAmountIn = getRandomNumber(amountInMin, amountInMax)
+        const amountIn = parseFloat(randomAmountIn.toFixed(swapParamsInitialCoin.decimals))
         let amountOut = await getToken2AmountFromToken1(
             configs[network.chainId.toString()]!.SyncSwap!.networkName,
             configs[network.chainId.toString()]!.SyncSwap!.poolAddress,
@@ -200,6 +202,17 @@ async function executeSwapCoin(
     }
 }
 
+function getRandomNumber(min: number, max: number) {
+    let randomNumber = Math.random() * (max - min) + min
+
+    // Ensure the result is not exactly 0
+    while (randomNumber === 0) {
+        randomNumber = Math.random() * (max - min) + min
+    }
+
+    return randomNumber
+}
+
 async function swapCoin(
     network: ethers.Network,
     provider: ethers.JsonRpcApiProvider,
@@ -273,13 +286,13 @@ async function getToken2AmountFromToken1(
             const quantityInQuote =
                 (amountIn * 10 ** quoteDecimals) / (parseFloat(quoteTokenPriceBaseToken) * 10 ** baseDecimals)
             // Slippage of 5%
-            return Math.floor(quantityInQuote * 10 ** baseDecimals * (1 - 0.05))
+            return Math.floor(quantityInQuote * 10 ** baseDecimals * (1 - 0.08))
         } else {
             // Adjust the conversion based on the decimal scales
             const quantityInBase =
                 (amountIn * parseFloat(quoteTokenPriceBaseToken)) / 10 ** (quoteDecimals - baseDecimals)
             // Slippage of 5%
-            return Math.floor(quantityInBase * 10 ** quoteDecimals * (1 - 0.05))
+            return Math.floor(quantityInBase * 10 ** quoteDecimals * (1 - 0.08))
         }
     } catch (error) {
         // Handle errors

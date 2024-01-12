@@ -22,6 +22,7 @@ export type TokenConfig = {
     decimals: number
     address: string
     amount: string
+    amountMin: string
     paths: Path[]
 }
 
@@ -83,6 +84,7 @@ export const configs: Configs = {
                 withdrawIndex: "2",
                 decimals: 6,
                 amount: "2",
+                amountMin: "0",
                 paths: [
                     {
                         steps: [
@@ -103,6 +105,7 @@ export const configs: Configs = {
                 withdrawIndex: "2",
                 decimals: 6,
                 amount: "2",
+                amountMin: "0",
                 paths: [
                     {
                         steps: [
@@ -123,6 +126,7 @@ export const configs: Configs = {
                 decimals: 18,
                 withdrawIndex: "1",
                 amount: "0.001",
+                amountMin: "0.00005",
                 paths: [
                     {
                         steps: [
@@ -150,6 +154,7 @@ export const configs: Configs = {
                 address: "0x06efdbff2a14a7c8e15944d1f4a48f9f95f663a4",
                 withdrawIndex: "2",
                 amount: "2",
+                amountMin: "0",
                 decimals: 6,
                 paths: [
                     {
@@ -170,6 +175,7 @@ export const configs: Configs = {
                 address: "0xf55BEC9cafDbE8730f096Aa55dad6D22d44099Df",
                 decimals: 6,
                 amount: "2",
+                amountMin: "0",
                 withdrawIndex: "2",
                 paths: [
                     {
@@ -190,6 +196,7 @@ export const configs: Configs = {
                 address: "0x5300000000000000000000000000000000000004",
                 decimals: 18,
                 amount: "0.001",
+                amountMin: "0.00005",
                 withdrawIndex: "1",
                 paths: [
                     {
