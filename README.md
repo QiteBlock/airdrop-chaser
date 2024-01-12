@@ -1,4 +1,4 @@
-# airdrop-chaser
+# Airdrop-Chaser
 
 This project main role is to be able to let airdrop chaser configure automatic interaction with blockchain project in order to get the airdrop at the end.
 

@@ -14,7 +14,7 @@ export async function interactWithDex(taskArgs: DexArgument, hre: HardhatRuntime
         for (const networkName of networksList) {
             const networkConfig = hre.config.networks[networkName]
 
-            if (!isHttpNetworkConfig(networkConfig)) {
+            if (!isHttpNetworkConfig(networkConfig, networkName)) {
                 console.log(`Skipping network ${networkName} (no URL specified)`)
                 continue
             }
@@ -301,12 +301,13 @@ async function getToken2AmountFromToken1(
     return 0
 }
 
-function isHttpNetworkConfig(config: any): config is HttpNetworkConfig {
+function isHttpNetworkConfig(config: any, networkName: string): config is HttpNetworkConfig {
     return (
         config &&
         typeof config.url === "string" &&
         !config.url.includes("127.0.0.1") &&
-        !config.url.includes("eth-mainnet.")
+        !config.url.includes("eth-mainnet.") &&
+        networkName != "mainnet"
     )
 }
 
