@@ -73,7 +73,7 @@ async function processBalances(
         )
 
         if (balance > 0) {
-            await handleDexInteraction(network, provider, signers[i], taskArgs, networkName, hre)
+            await handleDexInteraction(network, provider, signers[i], taskArgs, networkName, hre, balance)
         } else {
             console.log(`This account ${address} doesn't have enough ETH balance!`)
         }
@@ -86,7 +86,8 @@ async function handleDexInteraction(
     signer: ethers.Signer,
     taskArgs: DexArgument,
     networkName: string,
-    hre: HardhatRuntimeEnvironment
+    hre: HardhatRuntimeEnvironment,
+    balanceOfEth: bigint
 ) {
     if (taskArgs.dexName !== "SyncSwap") {
         console.log(`This dex is not supported under this network ${network.chainId}`)
@@ -106,7 +107,8 @@ async function handleDexInteraction(
             taskArgs.initialCoin.toUpperCase(),
             taskArgs.endCoin.toUpperCase(),
             networkName,
-            hre
+            hre,
+            balanceOfEth
         )
     } else {
         console.log("KeyPair Without ETH is not supported yet")
@@ -127,7 +129,8 @@ async function executeSwapCoin(
     initialCoin: string,
     endCoin: string,
     networkName: string,
-    hre: HardhatRuntimeEnvironment
+    hre: HardhatRuntimeEnvironment,
+    balanceOfEth: bigint
 ) {
     if (configs[network.chainId.toString()]!.SyncSwap.networkName == networkName) {
         const accountAddress = await signer.getAddress()
@@ -147,6 +150,7 @@ async function executeSwapCoin(
                 swapParamsEndCoin.decimals,
                 swapParamsInitialCoin.address
             )
+            amountOut = Math.round(amountOut)
             if (amountOut > 0) {
                 if (initialCoin.toUpperCase() !== "ETH") {
                     //Approve token
@@ -186,7 +190,8 @@ async function executeSwapCoin(
                                     amountIn,
                                     amountOut,
                                     initialCoin,
-                                    hre
+                                    hre,
+                                    balanceOfEth
                                 )
                             } else {
                                 console.log("Approve Transaction Failed " + approveTxReceipt.hash)
@@ -203,7 +208,8 @@ async function executeSwapCoin(
                                 amountIn,
                                 amountOut,
                                 initialCoin,
-                                hre
+                                hre,
+                                balanceOfEth
                             )
                         }
                     } else {
@@ -221,7 +227,8 @@ async function executeSwapCoin(
                         amountIn,
                         amountOut,
                         initialCoin,
-                        hre
+                        hre,
+                        balanceOfEth
                     )
                 }
             } else {
@@ -256,7 +263,8 @@ async function swapCoin(
     amountIn: number,
     amountOut: number,
     initialCoin: string,
-    hre: HardhatRuntimeEnvironment
+    hre: HardhatRuntimeEnvironment,
+    balanceOfEth: bigint
 ) {
     const routerContract = new hre.ethers.Contract(
         configs[network.chainId.toString()]!.SyncSwap!.routerAddress,
@@ -273,14 +281,19 @@ async function swapCoin(
         swapParamsEndCoin.paths[0].steps[0].pool = swapParamsInitialCoin.paths[0].steps[0].pool
         swapParamsEndCoin.paths[0].tokenIn = swapParamsInitialCoin.address
     }
-    swapParamsEndCoin.paths[0].amountIn = (amountIn * Math.pow(10, swapParamsInitialCoin.decimals)).toString()
+    swapParamsEndCoin.paths[0].amountIn = Math.round(amountIn * Math.pow(10, swapParamsInitialCoin.decimals)).toString()
     let tx
     if (initialCoin == "ETH") {
-        tx = await routerContract
-            .connect(signer)
-            .swap(swapParamsEndCoin.paths, ethers.toBigInt(amountOut), ethers.toBigInt(fiveMinutesLater), {
-                value: swapParamsEndCoin.paths[0].amountIn,
-            })
+        if (balanceOfEth > ethers.toBigInt(swapParamsEndCoin.paths[0].amountIn)) {
+            tx = await routerContract
+                .connect(signer)
+                .swap(swapParamsEndCoin.paths, ethers.toBigInt(amountOut), ethers.toBigInt(fiveMinutesLater), {
+                    value: swapParamsEndCoin.paths[0].amountIn,
+                })
+        } else {
+            console.log("Balance of ETH insufficient to execute!")
+            return
+        }
     } else {
         tx = await routerContract
             .connect(signer)
